@@ -17,7 +17,7 @@ from dataclasses import dataclass, asdict
 
 from aiogram import Bot, types, Router, F
 from aiogram.types import FSInputFile 
-from aiogram.filters import CommandStart, Command
+from aiogram.filters import CommandStart, Command, StateFilter
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 
@@ -28,7 +28,7 @@ from langchain_gigachat.chat_models import GigaChat
 from langgraph.prebuilt import create_react_agent
 from langgraph.checkpoint.memory import MemorySaver
 
-
+from common.texts import *
 from utils.pdf_send import send_all_pdfs
 
 # --------------------------------------------------------------------------------
@@ -230,6 +230,8 @@ SYSTEM_PROMPT = (
     )
 
 
+
+
 # --------------------------------------------------------------------------------
 # Инициализация агента
 # --------------------------------------------------------------------------------
@@ -248,22 +250,41 @@ agent = LLMAgent(model, tools=[generate_pdf_act])
 
 # ---- Команда старт ----
 @user_private_router.message(CommandStart())
-async def start_cmd(message: types.Message, state: FSMContext):
-    await message.answer("Приветсвую! Я бот для генерации актов и счетов. Отправь мне файл с вашими реквизитам")
-    await state.set_state(ReqFiles.waiting_my_file)
+async def start_cmd(message: types.Message):
+    await message.answer(hello_text)
 
 
-# ---- Команда help (показывает все функции бота, примеры файлов с реквизитами для ввода и примеры генерируемых документов) ----
+# ---- Команда info (информирует пользователя) ----
+@user_private_router.message(Command("информация"))
+async def info_cmd(message: types.Message):
+    await message.answer(hello_text)
 
 
-# ---- Команда new (обнуляет предыдущие действия) ----
-@user_private_router.message(Command("new"))
+# ---- Команда "команды" (информирует пользователя о имеющихся в его распоряжении командах) ----
+@user_private_router.message(Command("команды"))
+async def cmd_cmd(message: types.Message):
+    await message.answer(commands_text)
+
+
+# ---- Команда документы (информирует пользователя о тех документах, которые может генерировать бот) ----
+@user_private_router.message(Command("документы"))
+async def documents_cmd(message: types.Message):
+    await message.answer(documents_text)
+
+
+# ---- Команда новый (обнуляет предыдущие действия) ----
+@user_private_router.message(Command("новый"))
 async def new_cmd(message: types.Message, state: FSMContext):
     await state.clear()
-    await message.answer("Всё что было, то забыто. Пора начать всё с чистого листа. Отправьте файл с реквизитами исполнителя")
-    await state.set_state(ReqFiles.waiting_my_file)
+    await message.answer("Отправьте файл с реквизитами исполнителя")
+    await state.set_state(ReqFiles.waiting_executor_file)
 
 
+# ---- Команда реквизиты (запускает FSM для создания файла с реквизитами, которые введёт пользователь) ----
+@user_private_router.message(Command("реквизиты"))
+async def requisites_cmd(message: types.Message, state: FSMContext):
+    pass
+    
 
 
 # --------------------------------------------------------------------------------
@@ -272,13 +293,13 @@ async def new_cmd(message: types.Message, state: FSMContext):
 
 
 class ReqFiles(StatesGroup):
-    waiting_my_file = State()
+    waiting_executor_file = State()
     waiting_client_file = State()
     chatting = State()
 
 
 # ---- Универсальная функция для получения файлов с реквизитами ----
-@user_private_router.message(F.document)
+@user_private_router.message(StateFilter(ReqFiles.waiting_executor_file, ReqFiles.waiting_client_file), F.document)
 async def handle_file(message: types.Message, state: FSMContext, bot):
     current_state = await state.get_state()
 
@@ -293,7 +314,7 @@ async def handle_file(message: types.Message, state: FSMContext, bot):
 
 
     # ---- Временное имя файла ----
-    if current_state == ReqFiles.waiting_my_file.state:
+    if current_state == ReqFiles.waiting_executor_file.state:
         file_label = "my"
         next_state = ReqFiles.waiting_client_file
         prompt = "Файл реквизитов исполнителя получен! Теперь отправьте файл с реквизитами заказчик."
