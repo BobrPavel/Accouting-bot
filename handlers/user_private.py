@@ -255,25 +255,25 @@ async def start_cmd(message: types.Message):
 
 
 # ---- Команда info (информирует пользователя) ----
-@user_private_router.message(Command("информация"))
+@user_private_router.message(Command("info"))
 async def info_cmd(message: types.Message):
     await message.answer(hello_text)
 
 
 # ---- Команда "команды" (информирует пользователя о имеющихся в его распоряжении командах) ----
-@user_private_router.message(Command("команды"))
+@user_private_router.message(Command("commands"))
 async def cmd_cmd(message: types.Message):
     await message.answer(commands_text)
 
 
 # ---- Команда документы (информирует пользователя о тех документах, которые может генерировать бот) ----
-@user_private_router.message(Command("документы"))
+@user_private_router.message(Command("docs"))
 async def documents_cmd(message: types.Message):
     await message.answer(documents_text)
 
 
 # ---- Команда новый (обнуляет предыдущие действия) ----
-@user_private_router.message(Command("новый"))
+@user_private_router.message(Command("new"))
 async def new_cmd(message: types.Message, state: FSMContext):
     await state.clear()
     await message.answer("Отправьте файл с реквизитами исполнителя")
@@ -281,7 +281,7 @@ async def new_cmd(message: types.Message, state: FSMContext):
 
 
 # ---- Команда реквизиты (запускает FSM для создания файла с реквизитами, которые введёт пользователь) ----
-@user_private_router.message(Command("реквизиты"))
+@user_private_router.message(Command("reqs"))
 async def requisites_cmd(message: types.Message, state: FSMContext):
     pass
     
