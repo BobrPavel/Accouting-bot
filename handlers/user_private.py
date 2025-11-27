@@ -4,6 +4,7 @@
 # Импорты
 # --------------------------------------------------------------------------------
 
+
 import os
 import json
 import uuid
@@ -14,7 +15,8 @@ from io import BytesIO
 from typing import Sequence
 from dataclasses import dataclass, asdict
 
-from aiogram import types, Router, F
+from aiogram import Bot, types, Router, F
+from aiogram.types import FSInputFile 
 from aiogram.filters import CommandStart, Command
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
@@ -27,6 +29,7 @@ from langgraph.prebuilt import create_react_agent
 from langgraph.checkpoint.memory import MemorySaver
 
 
+from utils.pdf_send import send_all_pdfs
 
 # --------------------------------------------------------------------------------
 # Дата классы
@@ -78,12 +81,14 @@ class Job:
     price: int  # цена за задачу
 
 
+
 # --------------------------------------------------------------------------------
 # Инструменты агента
 # --------------------------------------------------------------------------------
 
+
 @tool
-def generate_pdf_act(customer: Customer, executor: Executor, jobs: list[Job]) -> None:
+def generate_pdf_act(customer: Customer, executor: Executor, jobs: list[Job],  user_id: int) -> None:
     """
     Генерирует PDF-акт, в котором заполнены данные
     клиента, его банковские реквизиты, а также выполненные задачи
@@ -95,25 +100,73 @@ def generate_pdf_act(customer: Customer, executor: Executor, jobs: list[Job]) ->
     Returns:
         None
     """
+
+    
+    # ---- Все временные файлы и pdf файл с актом сохраняются в typst/<user_id> ----
+    user_folder = os.path.join("typst", str(user_id))
+    os.makedirs(user_folder, exist_ok=True)
+
+    
+    # ---- Создаём пути к json и pdf ----
+    act_json_path = os.path.join(user_folder, "act.json")
+    act_pdf_path = os.path.join(user_folder, "act.pdf")
+
+
+    # ---- Сохраняем JSON ----
     act_json = {
         "customer": asdict(customer),
         "executor": asdict(executor),
         "jobs": list(map(
             lambda j: asdict(j), jobs
-        ))
+        )),
     }
-    with open(os.path.join("typst", "act.json"), "w", encoding="utf-8") as f:
-        json.dump(act_json, f, ensure_ascii=False)
-    command = [TYPST_BIN, "compile", "--root", "./typst", "typst/act.typ"]
+
+    with open(act_json_path, "w", encoding="utf-8") as f:
+        json.dump(act_json, f, ensure_ascii=False, indent=2)
+
+    
+
+    # ---- Загружаем шаблон ----
+    typst_template_path = "typst/act.typ"
+    with open(typst_template_path, "r", encoding="utf-8") as f:
+        template = f.read()
+
+    
+    relative_json_path = "act.json"
+
+    template = template.replace(
+        '#let act = json("act.json")',
+        f'#let act = json("{relative_json_path}")'
+    )
+
+    temp_typ_path = os.path.join(user_folder, "act_user.typ")
+
+    with open(temp_typ_path, "w", encoding="utf-8") as f:
+        f.write(template)
+
+
+    # ---- Создаём команду для компиляции pdf файла и исполняем её ----
+    command = [
+        TYPST_BIN,
+        "compile",
+        "--root",
+        "./typst",
+        temp_typ_path,
+        act_pdf_path
+    ]
+
     try:
-        subprocess.run(command,
-                       check=True,
-                       stdout=subprocess.PIPE,
-                       stderr=subprocess.PIPE, 
-                       text=True,
-                       encoding="utf-8")
+        subprocess.run(
+            command,
+            check=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            encoding="utf-8"
+        )
     except subprocess.CalledProcessError as e:
         print(e.stderr)
+
 
 
 # --------------------------------------------------------------------------------
@@ -157,7 +210,7 @@ class LLMAgent:
 
 
 # --------------------------------------------------------------------------------
-# Настройки
+# Настройки и константы
 # --------------------------------------------------------------------------------
 
 
@@ -166,18 +219,14 @@ user_private_router = Router()
 TYPST_BIN = os.path.join("typst", "typst.exe")
 
 SYSTEM_PROMPT = (
-        "Твоя задача сгенерировать акт выполненых работ"
+        "Твоя задача сгенерировать бухгалтерский докумет (пока ты можешь генерировать только акт выполненых работ)"
         "Для этого тебе надо взять реквизиты контрагента и реквизиты исполнителя из памяти,"
-        "Запроси работы для включения в акт (наименования задач и их стоимость), работ может быть несколько. "
-        "Если пользователь указывает в качетсве работы курс, то для документов берём одну работу, в точности такую "
-        "\"Обучение одного сотрудника на курсе «Хардкорная веб-разработка»\", стоимостью 170 тыс руб."
-        "Никакие данные не придумывай, всё необходимое строго запроси у "
-        "пользователя. Все реквизиты тебе переданы в память. Для генерации документов используй данные тебе иснрументы "
-        "Имя и отчество подписанта сокращаем до одной первой буквы, "
-        "например, Иванов А.Е. "
+        "Никакие данные не придумывай, всё необходимое строго запроси у пользователя "
+        "Все реквизиты тебе переданы в память. Для генерации документов используй данные тебе иснрументы "
+        "Имя и отчество подписанта сокращаем до одной первой буквы, например, Иванов А.Е. "
+        "Если в сообщении содержится [USER_ID:XXXX], передавай это значение в инструмент как параметр user_id"
         "Название компании оборачиваем в кавычки ёлочкой, например, "
-        "ООО «Рога и копыта», то есть до названия компании ставим « и после названия "
-        "ставим »."
+        "ООО «Рога и копыта», то есть до названия компании ставим « и после названия ставим ». "
     )
 
 
@@ -197,13 +246,17 @@ agent = LLMAgent(model, tools=[generate_pdf_act])
 # Обработчики
 # --------------------------------------------------------------------------------
 
-
+# ---- Команда старт ----
 @user_private_router.message(CommandStart())
 async def start_cmd(message: types.Message, state: FSMContext):
     await message.answer("Приветсвую! Я бот для генерации актов и счетов. Отправь мне файл с вашими реквизитам")
     await state.set_state(ReqFiles.waiting_my_file)
 
 
+# ---- Команда help (показывает все функции бота, примеры файлов с реквизитами для ввода и примеры генерируемых документов) ----
+
+
+# ---- Команда new (обнуляет предыдущие действия) ----
 @user_private_router.message(Command("new"))
 async def new_cmd(message: types.Message, state: FSMContext):
     await state.clear()
@@ -211,8 +264,10 @@ async def new_cmd(message: types.Message, state: FSMContext):
     await state.set_state(ReqFiles.waiting_my_file)
 
 
+
+
 # --------------------------------------------------------------------------------
-# FSM для получения файлов с реквизитами
+# FSM для получения файлов с реквизитами и диалога с пользователем
 # --------------------------------------------------------------------------------
 
 
@@ -222,9 +277,11 @@ class ReqFiles(StatesGroup):
     chatting = State()
 
 
+# ---- Универсальная функция для получения файлов с реквизитами ----
 @user_private_router.message(F.document)
 async def handle_file(message: types.Message, state: FSMContext, bot):
     current_state = await state.get_state()
+
 
     doc = message.document
     file_id = doc.file_id
@@ -235,7 +292,7 @@ async def handle_file(message: types.Message, state: FSMContext, bot):
         mime_type = "application/octet-stream"
 
 
-    # Временное имя файла
+    # ---- Временное имя файла ----
     if current_state == ReqFiles.waiting_my_file.state:
         file_label = "my"
         next_state = ReqFiles.waiting_client_file
@@ -244,7 +301,14 @@ async def handle_file(message: types.Message, state: FSMContext, bot):
     elif current_state == ReqFiles.waiting_client_file.state:
         file_label = "client"
         next_state = ReqFiles.chatting
-        prompt = "Файл реквизитов заказчика получен!"
+        prompt = (
+        "Файл реквизитов заказчика получен!\n"
+        "Теперь отравьте работы для включения в акт, например:\n"
+        "\n1) Поставка стеклотары - 40 000 рублей.\n"
+        "2) Поставка этикеток - 30 000 рублей."
+        )
+        
+
 
     else:
         await message.answer("Сначала отправьте файл с ревизитами")
@@ -278,13 +342,15 @@ async def handle_file(message: types.Message, state: FSMContext, bot):
         my_file_id = data.get("my_file_id")
         client_file_id = data.get("client_file_id")
 
-        # ---- Отправляем system_prompt агенту ----
+        # ---- Отправляем system_prompt агенту и получаем ответ----
         agent.invoke(
             content=SYSTEM_PROMPT,
             attachments=[my_file_id, client_file_id]
         )
+        
 
-        # ---- Переходим в режим диалога ----
+
+        # ---- Переходим в режим диалога и отправляем ответ агента ----
         await state.set_state(ReqFiles.chatting)
 
 
@@ -292,16 +358,32 @@ async def handle_file(message: types.Message, state: FSMContext, bot):
 
 
 @user_private_router.message(ReqFiles.chatting)
-async def agent_chat(message: types.Message, state: FSMContext):
+async def agent_chat(message: types.Message, state: FSMContext, bot: Bot):
 
+    # ---- Получаем данные из FSM и user_id ----
+    user_id = message.from_user.id
     data = await state.get_data()
     client_reqs_file_id = data.get("client_file_id")
 
-    # Вызываем агента
+
+    # ---- Вызываем агента, передаём ему данные ----
     response = agent.invoke(
-        content=message.text,
+        content=f"[USER_ID:{user_id}]\n{message.text}",
         attachments=[client_reqs_file_id]
     )
 
-    await message.answer(response)
+    
+    # ---- Создаём путь к папке с файлами ----
+    base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    folder_path = os.path.join(base_dir, "typst", str(user_id))
+
+
+    # ---- проверка, существует ли директория (она существует только если произошла генерация). Если директории нет, то агент - отвечает на обвчные вопросы ----
+    if os.path.isdir(folder_path):
+        await message.answer(response)
+        await send_all_pdfs(message, folder_path)
+    else:
+        await message.answer(response)
+
+    
 

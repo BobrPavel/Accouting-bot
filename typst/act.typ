@@ -1,4 +1,4 @@
-#import "ru-numbers.typ": ru-words
+#import "../ru-numbers.typ": ru-words
 #import "@preview/zero:0.3.3": num, set-group
 #set-group(size: 3, separator: sym.space.thin, threshold: 4)
 
