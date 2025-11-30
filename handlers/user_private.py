@@ -33,7 +33,7 @@ from common.user_reqs import Requisites
 
 
 from utils.files_send import send_all_user_files
-from utils.reqs_file_generator import generate_requisites_docx
+from utils.reqs_file_generator import generate_requisites_docx_file
 
 # --------------------------------------------------------------------------------
 # Дата классы
@@ -444,7 +444,7 @@ async def collect_reqs_data(message: types.Message, state: FSMContext):
         os.makedirs(folder_path, exist_ok=True)
         
         # ---- Запускаем создание файла и отправляем его ----
-        await generate_requisites_docx(data, folder_path)
+        await generate_requisites_docx_file(data, folder_path)
         await send_all_user_files(message, folder_path)
         await state.clear()
 

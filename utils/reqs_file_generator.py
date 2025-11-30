@@ -5,7 +5,10 @@
 # --------------------------------------------------------------------------------
 
 import os
+
 from docx import Document
+from docx.shared import Pt, RGBColor
+from docx.oxml.ns import qn
 
 from common.user_reqs import Requisites
 
@@ -14,7 +17,27 @@ from common.user_reqs import Requisites
 # --------------------------------------------------------------------------------
 
 
-async def generate_requisites_docx(fsm_data: dict, folder_path: str) -> str:
+# ---- Функция для стилизации документа ----
+async def docx_file_styling(doc):
+    """Применяет Times New Roman, 14 pt, чёрный цвет и межстрочный интервал 1.5 ко всем параграфам."""
+
+    for paragraph in doc.paragraphs:
+        # ---- Межстрочный интервал ----
+        paragraph.paragraph_format.line_spacing = 1.5
+
+        for run in paragraph.runs:
+            # ---- Шритф ----
+            run.font.name = "Times New Roman"
+            run._element.rPr.rFonts.set(qn('w:eastAsia'), 'Times New Roman')  # для кириллицы
+
+            # ---- Размер и цвет ----
+            run.font.size = Pt(14)
+            run.font.color.rgb = RGBColor(0, 0, 0)
+
+
+
+# ---- Генерация документа ----
+async def generate_requisites_docx_file(fsm_data: dict, folder_path: str) -> str:
     """
     Создание DOCX файла с реквизитами на основе данных из FSM.
     fsm_data — словарь вида:
@@ -62,7 +85,7 @@ async def generate_requisites_docx(fsm_data: dict, folder_path: str) -> str:
 
     doc.add_paragraph(f"{fsm_data.get('field_15', '')}")  # Подписант
 
-    
+    await apply_global_style(doc)
     doc.save(file_path)  # Сохраняем файл
 
 
