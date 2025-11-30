@@ -29,7 +29,11 @@ from langgraph.prebuilt import create_react_agent
 from langgraph.checkpoint.memory import MemorySaver
 
 from common.texts import *
-from utils.pdf_send import send_all_pdfs
+from common.user_reqs import Requisites
+
+
+from utils.files_send import send_all_user_files
+from utils.reqs_file_generator import generate_requisites_docx
 
 # --------------------------------------------------------------------------------
 # Дата классы
@@ -254,11 +258,6 @@ async def start_cmd(message: types.Message):
     await message.answer(hello_text)
 
 
-# ---- Команда info (информирует пользователя) ----
-@user_private_router.message(Command("info"))
-async def info_cmd(message: types.Message):
-    await message.answer(hello_text)
-
 
 # ---- Команда "команды" (информирует пользователя о имеющихся в его распоряжении командах) ----
 @user_private_router.message(Command("commands"))
@@ -283,7 +282,9 @@ async def new_cmd(message: types.Message, state: FSMContext):
 # ---- Команда реквизиты (запускает FSM для создания файла с реквизитами, которые введёт пользователь) ----
 @user_private_router.message(Command("reqs"))
 async def requisites_cmd(message: types.Message, state: FSMContext):
-    pass
+    await state.update_data(step=0)
+    await state.set_state(OrgData.collecting)
+    await message.answer(f"1️: Введите: {Requisites[0]}")
     
 
 
@@ -332,7 +333,7 @@ async def handle_file(message: types.Message, state: FSMContext, bot):
 
 
     else:
-        await message.answer("Сначала отправьте файл с ревизитами")
+        await message.answer("Сначала отправьте файл с реквизитами")
         return
 
     # ---- Скачиваем файл в память ----
@@ -402,9 +403,77 @@ async def agent_chat(message: types.Message, state: FSMContext, bot: Bot):
     # ---- проверка, существует ли директория (она существует только если произошла генерация). Если директории нет, то агент - отвечает на обвчные вопросы ----
     if os.path.isdir(folder_path):
         await message.answer(response)
-        await send_all_pdfs(message, folder_path)
+        await send_all_user_files(message, folder_path)
     else:
         await message.answer(response)
 
     
 
+# --------------------------------------------------------------------------------
+# FSM для создания файла с реквизитами
+# --------------------------------------------------------------------------------
+
+
+class OrgData(StatesGroup):
+    collecting = State()   
+
+
+
+@user_private_router.message(OrgData.collecting)
+async def collect_reqs_data(message: types.Message, state: FSMContext):
+    data = await state.get_data()
+    step = data.get("step", 0)
+
+    # ---- Сохраняем значение поля ----
+    await state.update_data(**{f"field_{step}": message.text})
+
+    step += 1
+
+    # ---- Если ещё есть поля → спрашиваем следующее ----
+    if step < len(Requisites):
+        await state.update_data(step=step)
+        await message.answer(f"{step+1}: Введите: {Requisites[step]}")
+    # ---- Если юольше полей нет, то сохраняем данные ----
+    else:
+        data = await state.get_data()
+        user_id = message.from_user.id
+
+        # ---- Путь к временной папке с файлом ----
+        base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        folder_path = os.path.join(base_dir, "typst", str(user_id))
+        os.makedirs(folder_path, exist_ok=True)
+        
+        # ---- Запускаем создание файла и отправляем его ----
+        await generate_requisites_docx(data, folder_path)
+        await send_all_user_files(message, folder_path)
+        await state.clear()
+
+
+# ---- Отмена FSM ----
+@user_private_router.message(StateFilter(OrgData.collecting), Command("cancel"))
+async def cancel_handler(message: types.Message, state: FSMContext) -> None:
+    current_state = await state.get_state()
+    if current_state is None:
+        return
+    else:
+        await state.clear()
+        await message.answer("Действия отменены")
+
+
+# ---- Возврат на прошлое состояние ----
+@user_private_router.message(StateFilter(OrgData.collecting), Command("back"))
+async def back_handler(message: types.Message, state: FSMContext):
+    data = await state.get_data()
+    step = data.get("step", 0)
+
+    if step == 0:
+        await message.answer("❗ Вы уже на первом шаге.")
+        return
+
+    step -= 1
+    await state.update_data(step=step)
+
+    await message.answer(
+        f"🔙 Возврат назад.\n"
+        f"{step+1}️ {Requisites[step]}"
+    )
