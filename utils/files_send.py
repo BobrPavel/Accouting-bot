@@ -29,4 +29,3 @@ async def send_all_user_files(message: types.Message, folder_path: str):
             await message.answer_document(FSInputFile(file_path))
     # ---- По окончании процесса удаляем папку, чтобы не хранить персональные данные ----
     shutil.rmtree(folder_path)
-    return
